@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import logging
 import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -11,6 +12,20 @@ METADATA_FILE = "/data/metadata.json"  # Stores ETag and Last-Modified
 PDB_SEQRES_URL = "https://files.wwpdb.org/pub/pdb/derived_data/pdb_seqres.txt"
 
 nav_lengths = {}
+
+
+class HealthCheckFilter(logging.Filter):
+    """Filter out /health endpoint from access logs."""
+    def filter(self, record):
+        if hasattr(record, 'args') and len(record.args) >= 3:
+            request_line = record.args[2]
+            if isinstance(request_line, str) and '/health' in request_line:
+                return False
+        return True
+
+
+# Filter out healthcheck requests from uvicorn access logs
+logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 
 
 def get_metadata():
@@ -124,3 +139,10 @@ def get_length(pdbid: str):
     raise HTTPException(
         status_code=404, detail="PDB ID not found or contains no nucleic acids"
     )
+
+
+@app.get("/health")
+def health_check():
+    if not nav_lengths:
+        raise HTTPException(status_code=503, detail="Data not loaded yet")
+    return {"status": "healthy", "entries": len(nav_lengths)}
