@@ -161,11 +161,17 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/api/{pdbid}")
 def get_length(pdbid: str):
-    pdbid = pdbid.lower()
+    original_pdbid = pdbid.lower()
+    # Handle new PDB ID format: pdb_0000xxxx -> xxxx
+    if original_pdbid.startswith("pdb_0000"):
+        pdbid = original_pdbid[8:]  # Extract last 4 characters
+    else:
+        pdbid = original_pdbid
+
     if pdbid in nav_lengths:
-        return {"pdbid": pdbid, "total_na_length": nav_lengths[pdbid]}
+        return {"pdbid": original_pdbid, "total_na_length": nav_lengths[pdbid]}
     elif pdbid in valid_pdb_ids:
-        return {"pdbid": pdbid, "total_na_length": 0}
+        return {"pdbid": original_pdbid, "total_na_length": 0}
     raise HTTPException(status_code=404, detail="PDB ID not found")
 
 
