@@ -1,0 +1,12 @@
+services:
+  pdb-api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - pdb_data:/data
+    restart: always
+
+volumes:
+  pdb_data:
+
