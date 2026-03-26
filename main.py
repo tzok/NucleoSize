@@ -12,14 +12,16 @@ METADATA_FILE = "/data/metadata.json"  # Stores ETag and Last-Modified
 PDB_SEQRES_URL = "https://files.wwpdb.org/pub/pdb/derived_data/pdb_seqres.txt"
 
 nav_lengths = {}
+valid_pdb_ids = set()
 
 
 class HealthCheckFilter(logging.Filter):
     """Filter out /health endpoint from access logs."""
+
     def filter(self, record):
-        if hasattr(record, 'args') and len(record.args) >= 3:
+        if hasattr(record, "args") and len(record.args) >= 3:
             request_line = record.args[2]
-            if isinstance(request_line, str) and '/health' in request_line:
+            if isinstance(request_line, str) and "/health" in request_line:
                 return False
         return True
 
@@ -52,9 +54,9 @@ async def check_and_update():
     headers = {}
 
     if metadata.get("etag"):
-        headers["If-None-Match"] = metadata["etag"]
+        headers["If-None-Match"] = metadata.get("etag")
     if metadata.get("last-modified"):
-        headers["If-Modified-Since"] = metadata["last-modified"]
+        headers["If-Modified-Since"] = metadata.get("last-modified")
 
     async with httpx.AsyncClient() as client:
         # We start a stream request. It will resolve the headers immediately.
@@ -67,31 +69,45 @@ async def check_and_update():
             response.raise_for_status()
 
             print("New data found! Downloading and parsing...")
-            new_data = {}
+            new_nav_lengths = {}
+            new_valid_pdb_ids = set()
             async for line in response.aiter_lines():
                 if line.startswith(">"):
+                    parts = line.split()
+                    pdb_id = parts[0][1:5].lower()
+                    new_valid_pdb_ids.add(pdb_id)
+
                     if "mol:na" in line or "mol:nucleic" in line:
-                        parts = line.split()
-                        pdb_id = parts[0][1:5].lower()
                         length_part = next(
                             (p for p in parts if p.startswith("length:")), None
                         )
                         if length_part:
                             length = int(length_part.split(":")[1])
-                            new_data[pdb_id] = new_data.get(pdb_id, 0) + length
+                            new_nav_lengths[pdb_id] = (
+                                new_nav_lengths.get(pdb_id, 0) + length
+                            )
+
+            # Prepare combined data for saving
+            combined_data = {
+                "nav_lengths": new_nav_lengths,
+                "valid_pdb_ids": list(new_valid_pdb_ids),
+            }
 
             # Save our atomic files
             with open(TEMP_FILE, "w") as f:
-                json.dump(new_data, f)
+                json.dump(combined_data, f)
             os.replace(TEMP_FILE, DATA_FILE)
 
             # Save the new cache headers
             save_metadata(response.headers)
 
             # Swap RAM atomically
-            global nav_lengths
-            nav_lengths = new_data
-            print(f"Update complete. Loaded {len(nav_lengths)} nucleic acid entries.")
+            global nav_lengths, valid_pdb_ids
+            nav_lengths = new_nav_lengths
+            valid_pdb_ids = new_valid_pdb_ids
+            print(
+                f"Update complete. Loaded {len(nav_lengths)} nucleic acid entries from {len(valid_pdb_ids)} total PDB IDs."
+            )
             return True
 
 
@@ -111,12 +127,24 @@ async def periodic_updater():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global nav_lengths
+    global nav_lengths, valid_pdb_ids
 
     if os.path.exists(DATA_FILE):
         print("Loading existing data from volume...")
         with open(DATA_FILE, "r") as f:
-            nav_lengths = json.load(f)
+            data = json.load(f)
+            # Handle both old format (direct dict) and new format (combined dict)
+            if (
+                isinstance(data, dict)
+                and "nav_lengths" in data
+                and "valid_pdb_ids" in data
+            ):
+                nav_lengths = data["nav_lengths"]
+                valid_pdb_ids = set(data["valid_pdb_ids"])
+            else:
+                # Old format: assume it's just nav_lengths
+                nav_lengths = data
+                valid_pdb_ids = set(data.keys())
 
     # Always fire an immediate check on container startup/deployment
     # This also handles the first-time fetch if no DATA_FILE exists
@@ -136,13 +164,17 @@ def get_length(pdbid: str):
     pdbid = pdbid.lower()
     if pdbid in nav_lengths:
         return {"pdbid": pdbid, "total_na_length": nav_lengths[pdbid]}
-    raise HTTPException(
-        status_code=404, detail="PDB ID not found or contains no nucleic acids"
-    )
+    elif pdbid in valid_pdb_ids:
+        return {"pdbid": pdbid, "total_na_length": 0}
+    raise HTTPException(status_code=404, detail="PDB ID not found")
 
 
 @app.get("/health")
 def health_check():
     if not nav_lengths:
         raise HTTPException(status_code=503, detail="Data not loaded yet")
-    return {"status": "healthy", "entries": len(nav_lengths)}
+    return {
+        "status": "healthy",
+        "entries": len(nav_lengths),
+        "total_pdb_ids": len(valid_pdb_ids),
+    }
