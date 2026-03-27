@@ -9,11 +9,15 @@ This service provides a simple REST API to query the total length of nucleic aci
 ## Features
 
 - **REST API**: Simple endpoint to query nucleic acid lengths by PDB ID
+- **Health Check**: Built-in health endpoint for monitoring and Docker healthchecks
+- **New PDB ID Format**: Supports both classic (`1abc`) and new (`pdb_00001abc`) PDB ID formats
 - **Automatic Updates**: Checks for new PDB data every 6 hours with conditional GET (respects ETag/Last-Modified headers)
 - **Efficient Caching**: Maintains local cache in `/data` volume that survives container restarts
-- **Docker Support**: Easy deployment with Docker Compose
+- **Docker Support**: Easy deployment with Docker Compose, including tini init for proper signal handling
 - **Streaming Download**: Memory-efficient parsing of large PDB sequence files
 - **Atomic Updates**: Ensures data consistency during updates
+- **CI/CD**: GitHub Actions for automated testing and Docker image publishing
+- **Test Suite**: Comprehensive pytest-based test suite
 
 ## Quick Start
 
@@ -73,7 +77,39 @@ Returns the total length of all nucleic acid sequences for the specified PDB str
 **Example:**
 
 ```bash
+# Classic PDB ID format
 curl http://localhost:8000/api/1abc
+
+# New PDB ID format (automatically converted)
+curl http://localhost:8000/api/pdb_00001abc
+```
+
+### Health Check
+
+```
+GET /health
+```
+
+Returns the service health status and current data statistics.
+
+**Response (200 OK):**
+
+```json
+{
+  "status": "healthy",
+  "entries": 12345,
+  "total_pdb_ids": 98765
+}
+```
+
+**Response (503 Service Unavailable):**
+
+Returned when data is still loading on startup.
+
+**Example:**
+
+```bash
+curl http://localhost:8000/health
 ```
 
 ### API Documentation
@@ -119,17 +155,36 @@ Data is sourced from: `https://files.wwpdb.org/pub/pdb/derived_data/pdb_seqres.t
 
 ```
 .
-├── main.py              # FastAPI application
-├── Dockerfile           # Docker image definition
-├── docker-compose.yml   # Docker Compose configuration
-├── requirements.in      # High-level dependencies
-├── requirements.txt     # Pinned dependencies (auto-generated)
-└── data/                # Persisted data (Docker volume)
+├── main.py                 # FastAPI application
+├── Dockerfile              # Docker image definition
+├── docker-compose.yml      # Docker Compose configuration
+├── requirements.in         # High-level dependencies (for Docker)
+├── requirements.txt        # Pinned dependencies (auto-generated)
+├── requirements-dev.in   # Development dependencies
+├── requirements-dev.txt  # Pinned dev dependencies (auto-generated)
+├── tests/                # Test suite
+│   ├── __init__.py
+│   ├── conftest.py
+│   └── test_api.py
+└── data/                 # Persisted data (Docker volume)
     ├── na_lengths.json      # Cached nucleic acid lengths
     └── metadata.json        # ETag and Last-Modified headers
 ```
 
 ## Development
+
+### Running Tests
+
+```bash
+# Install development dependencies
+pip install -r requirements-dev.in
+
+# Run all tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_api.py -v
+```
 
 ### Lint and Format
 
@@ -146,10 +201,20 @@ ruff format .
 
 ### Adding Dependencies
 
+**Production dependencies** (included in Docker image):
+
 Edit `requirements.in` and run:
 
 ```bash
 pip-compile requirements.in
+```
+
+**Development dependencies** (not included in Docker image):
+
+Edit `requirements-dev.in` and run:
+
+```bash
+pip-compile requirements-dev.in
 ```
 
 ## Configuration
@@ -169,6 +234,26 @@ The service can be configured via environment variables:
 - **Server**: [Uvicorn](https://www.uvicorn.org/) - Lightning-fast ASGI server
 - **Python**: 3.13+
 - **Docker**: Multi-stage build with Python 3.14-slim
+
+## CI/CD
+
+The project uses GitHub Actions for continuous integration and deployment:
+
+### Automated Testing
+
+Runs on every push and pull request to `main`:
+- Installs production and development dependencies
+- Executes the full test suite with pytest
+
+### Docker Publishing
+
+Automatically builds and publishes Docker images to GitHub Container Registry:
+- Triggers on pushes to `main` branch
+- Triggers on new tags
+- Builds but does not push on pull requests (for validation)
+- Uses Docker Buildx with layer caching for faster builds
+
+Images are available at: `ghcr.io/${{ github.repository }}`
 
 ## License
 
