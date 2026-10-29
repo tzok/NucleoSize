@@ -32,5 +32,5 @@ pytest==9.1.1
     # via
     #   -r requirements-dev.in
     #   pytest-asyncio
-pytest-asyncio==1.4.0
+pytest-asyncio==1.4.1
     # via -r requirements-dev.in
