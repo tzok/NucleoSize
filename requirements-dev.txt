@@ -4,7 +4,7 @@
 #
 #    pip-compile requirements-dev.in
 #
-anyio==4.13.0
+anyio==4.14.2
     # via httpx
 certifi==2026.10.18
     # via
